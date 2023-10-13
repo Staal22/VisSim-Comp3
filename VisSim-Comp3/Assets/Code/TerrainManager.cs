@@ -31,7 +31,7 @@ public class TerrainManager : MonoBehaviour
             }
 
             // Assuming the first line in the file contains the count of points, skipping it
-            for (int i = 1; i < lines.Length; i++)
+            for (int i = 1; i < lines.Length; i += 50) // draw 100k points instead of 5M
             {
                 var line = lines[i];
                 var values = line.Split(' ');
@@ -45,7 +45,7 @@ public class TerrainManager : MonoBehaviour
                 var zPos = float.Parse(values[2]);
                 
                 var point = Instantiate(pointPrefab);
-                point.transform.position = new Vector3(xPos - 260000, yPos - 6660000f, zPos);
+                point.transform.position = new Vector3(xPos - 260000, zPos, yPos - 6660000f);
             }
         }
         catch (Exception e)
