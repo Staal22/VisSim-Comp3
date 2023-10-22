@@ -1,17 +1,24 @@
 using System;
 using System.Linq;
 using System.IO;
+using System.Threading.Tasks;
 using UnityEngine;
 
 public class TerrainManager : MonoBehaviour
 {
     public static TerrainManager Instance;
-    // [SerializeField] private GameObject pointPrefab;
-    [SerializeField] private Mesh instanceMesh;
-    [SerializeField] private Material instanceMaterial;
-    private const int BufferSize = 1023; // must not exceed 1023
-    private Matrix4x4[][] _batches;
+    public Mesh instanceMesh;
+    public Material instanceMaterial;
     private const string OutputFilePath = "Assets/StreamingAssets/terrain.txt";
+    
+    private ComputeBuffer _matricesBuffer;
+    private ComputeBuffer _positionBuffer;
+    private ComputeBuffer _argsBuffer;
+    private Matrix4x4[] _matrices;
+
+    private readonly uint[] _args = { 0, 0, 0, 0, 0 };
+    private Vector3[] _points;
+    private int _count;
     
     private void Awake()
     {
@@ -21,52 +28,43 @@ public class TerrainManager : MonoBehaviour
     private void Start()
     {
         InitializePointData();
+        _count = _points.Length;
+        _argsBuffer = new ComputeBuffer(1, _args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
+        UpdateBuffers();
     }
-    
+
     private void Update()
     {
-        // draw all batches
-        for (int batchIndex = 0; batchIndex < _batches.Length; ++batchIndex)
-        {
-            Graphics.DrawMeshInstanced(instanceMesh, 0, instanceMaterial, _batches[batchIndex], _batches[batchIndex].Length);
-        }
+        Graphics.DrawMeshInstancedIndirect(instanceMesh, 0, instanceMaterial, new Bounds(new Vector3(900, 580, 5120), Vector3.one * 1000), _argsBuffer);
     }
-    
+
     private void InitializePointData()
     {
-        var positions = LoadPositionsFromFile(OutputFilePath);
+        _points = LoadPositionsFromFile(OutputFilePath).ToArray();
+    }
 
-        //Buffer size
-        int bufferSize = 1023;
-    
-        // Calculate the number of batches we'll need to render all instances
-        int batchCount = Mathf.CeilToInt((float)positions.Length / bufferSize);
-    
-        // allocate array for all batches
-        _batches = new Matrix4x4[batchCount][];
+    private void UpdateBuffers()
+    {
+        // Release old resources and calculate new size
+        _matricesBuffer?.Release();
+        _positionBuffer?.Release();
+        _positionBuffer = new ComputeBuffer(_count, 16);
+        
+        // create an array to hold Vector4 data
+        var vectors = new Vector4[_points.Length];
 
-        // for each batch...
-        for (int batchIndex = 0; batchIndex < batchCount; ++batchIndex)
-        {
-            // calculate the number of instances to render in this batch
-            // (for the last batch this might be less than bufferSize!)
-            int instanceCount = Mathf.Min(bufferSize, positions.Length - batchIndex * bufferSize);
-            _batches[batchIndex] = new Matrix4x4[instanceCount];
+        Parallel.For(0, vectors.Length, i => {
+            var pos = _points[i];
+            var unityPos = new Vector3(pos.x - 260000f, pos.z, pos.y - 6660000f);
+            vectors[i] = Matrix4x4.TRS(unityPos, Quaternion.identity, Vector3.one).GetColumn(3);
+        });
 
-            // prepare instance data for this batch
-            for (int i = 0; i < instanceCount; ++i)
-            {
-                // calculate the index into our positions array
-                int positionIndex = batchIndex * bufferSize + i;
+        _positionBuffer.SetData(vectors);
+        instanceMaterial.SetBuffer("position_buffer", _positionBuffer);
 
-                // convert position to unity coords
-                var pos = positions[positionIndex];
-                var unityPos = new Vector3(pos.x - 260000, pos.z, pos.y - 6660000f);
-
-                // create transformation matrix
-                _batches[batchIndex][i] = Matrix4x4.TRS(unityPos, Quaternion.identity, Vector3.one);
-            }
-        }
+        // vertices
+        uint[] args = { instanceMesh.GetIndexCount(0), (uint)_points.Length, instanceMesh.GetIndexStart(0), instanceMesh.GetBaseVertex(0), 0 };
+        _argsBuffer.SetData(args);
     }
     
     private Vector3[] LoadPositionsFromFile(string path)
@@ -77,5 +75,17 @@ public class TerrainManager : MonoBehaviour
             var values = line.Split(' ');
             return new Vector3(float.Parse(values[0]), float.Parse(values[1]), float.Parse(values[2]));
         }).ToArray();
+    }
+
+    private void OnDisable()
+    {
+        _matricesBuffer?.Release();
+        _matricesBuffer = null;
+        
+        _positionBuffer?.Release();
+        _positionBuffer = null;
+
+        _argsBuffer?.Release();
+        _argsBuffer = null;
     }
 }
